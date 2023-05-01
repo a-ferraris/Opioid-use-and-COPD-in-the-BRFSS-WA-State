@@ -42,7 +42,7 @@ brfss$ststr_year<-brfss$X_ststr+19000000 # we create a variable that adds the ye
 columns_interest<-c("X_age65yr", "age", "X_race", "sex", "zipcode1", "X_incomg", "X_phys14d", "X_ment14d", "X_michd", 
                     "cvdstrk3", "chcocncr",  "X_drdxar2", "chckdny2", "diabete4", "X_smoker3",  "drnkany5",
                      "pneuvac4", "op_any", "ststr_year", "X_llcpwt", 
-                    "X_psu", "X_bmi5cat", "chccopd2", "addepev3") # we create a vector of column names to simplify the merging of the data.
+                    "X_psu", "X_bmi5cat", "chccopd2", "addepev3", "X_age_g") # we create a vector of column names to simplify the merging of the data.
 
 merged<-brfss[,columns_interest] # data is saved in a merged dataset that will be later filtered
 
@@ -87,7 +87,18 @@ rm(brfss, columns_interest, merged)
 colnames(copd)<-c("over_65", "age", "race", "male", "zip", "income_cat", "phys_14", "ment_14", "coronary_mi", 
                   "stroke", "cancer",  "arthritis", "ckd", "diabetes", "smoker",  "drinking_any",
                   "pneuvac4", "op_any", "ststr_year", "llcpwt", 
-                  "psu", "bmi_cat", "copd", "depressive")
+                  "psu", "bmi_cat", "copd", "depressive", "age_group")
+
+# creating urban category using zipcodes
+zip<-read_xlsx("urban_zip_codes.xlsx") # loading original list of urban codes. 
+# Other codes are considered rural. 
+
+# merging
+copd<-merge(copd, zip, by = "zip", all.x = TRUE) # left-join of the datasets conditional on matching the zip. Thus, the zip that are present in both datasets are coded as 1
+copd$urban[is.na(copd$urban)==TRUE & 
+             is.na(copd$zip)==FALSE]<-0 # this code subsitutes NA in urban as zero 
+# if they are not missing valus at zip. 
+rm(zip)
 
 # cleaning one by one and recategorizing as factors
 
@@ -224,29 +235,47 @@ copd$depressive_01<-factor(copd$depressive_01,
                         levels = 0:1, 
                         labels= c("No", "Yes")) # this variable is coded in 0/1 format
 
-# table 1 formatting 
-zip<-read_xlsx("urban_zip_codes.xlsx") # loading original list of urban codes. 
-                                                # Other codes are considered rural. 
+copd$urban<-factor(copd$urban, 
+                   levels=0:1, 
+                   labels= c("Rural", "Urban"))
 
-# merging
-copd<-merge(copd, zip, by = "zip", all.x = TRUE) # left-join of the datasets conditional on matching the zip. Thus, the zip that are present in both datasets are coded as 1
-copd$urban[is.na(copd$urban)==TRUE & 
-             is.na(copd$zip)==FALSE]<-0 # this code subsitutes NA in urban as zero 
-                                         # if they are not missing valus at zip. 
+copd$age_group<-factor(copd$age_group, 
+                       levels=1:6, 
+                       labels = c("18 to 24", "25 to 34", "35 to 44", 
+                                  "45 to 54", "55 to 64", "65+"))
+
+copd$any_chronic[copd$diabetes=="No"& copd$cancer=="No" & copd$arthritis=="No" & copd$ckd=="No"&
+                   copd$coronary_mi=="No" & copd$stroke=="No"]<-0 # if all are negative, the any_chronic is 0
+
+copd$any_chronic[copd$diabetes=="Yes" | copd$cancer=="Yes" | copd$arthritis=="Yes" | copd$ckd=="Yes" |
+                   copd$coronary_mi=="Yes" | copd$stroke=="Yes"]<-1 # if any of the variables is positive, the any_comorb is positive
+
+copd$any_chronic<-factor(copd$any_chronic, 
+                         levels=0:1, 
+                         labels=c("No", "Yes"))
 
 # 3. creating table1 and weighting proportions.---- 
-table_one<-table1(~age+race+male+income_cat+urban+coronary_mi+stroke+cancer+arthritis+
-                    diabetes+ckd+smoker+drinking_any+phys_14+ment_14|depressive, data=copd)
+copd<-copd[!is.na(copd$depressive_01)==T & !is.na(copd$op_any01)==T,]
 
-t1flex(table_one) %>%save_as_docx(path="table_1.docx")
+table_one<-table1(~age+over_65+race+male+income_cat+urban+coronary_mi+stroke+cancer+arthritis+
+                    diabetes+ckd+smoker+drinking_any+phys_14+ment_14+age_group+any_chronic|depressive, data=copd)
+table_one
+t1flex(table_one) %>%save_as_docx(path="table_1.docx") # exporting table 1.
+
+# income_cat has >5% of missing data. To account for this, we create a new category with NA as ==9
+
+copd$income_na<-as.numeric(copd$income_cat) # creating new var as numeric
+copd$income_na[is.na(copd$income_na)==TRUE]<-9 # replacing missing as 9 category to be weighted later
+
+## 3.b. Weighting prevalences and estimating proportions ----
 
 options(survey.lonely.psu = 'adjust') # survey design features. 
 
 svy_design<-svydesign(data=copd, 
                       id= ~psu, strata= ~ststr_year, weights = ~llcpwt, 
-                      nest=TRUE)
+                      nest=TRUE) # setting survey design
 
-for (i in names(copd[,c(2:15, 27)])){
+for (i in names(copd[,c(2:16,28, 29)])){
   print(i)
   formula_str<-paste("~depressive+", i)
   formula_obj<-as.formula(formula_str)
@@ -255,22 +284,23 @@ for (i in names(copd[,c(2:15, 27)])){
     svytable(formula_obj, design = svy_design), 
                 margin=1)
   )
-} # this for loop function 
+} # this for loop function runs the function svytable across the columns of interest. 
+
+# separate procedure for income categories including NAs. 
+prop.table(svytable(~income_na+depressive,design=svy_design), margin=2) # Weighted % to be used in the table 1. 
 
 # 4. Preparing data for MH stratified analysis. ----
 
 # removing observations with NAs in depressive or opioid variables
 
-analysis<-copd[!is.na(copd$depressive_01)==T & !is.na(copd$op_any01)==T,]
-
-analysis<-analysis[,c("over_65", "male", "income_cat", "phys_14", "ment_14", "coronary_mi", 
+analysis<-copd[,c("over_65", "male", "income_cat", "phys_14", "ment_14", "coronary_mi", 
                   "stroke", "cancer",  "arthritis", "ckd", "diabetes", "smoker",  "drinking_any",
                   "op_any", "depressive")]
 
-analysis$cv[analysis$coronary_mi=="Yes"|analysis$stroke=="Yes"]<-1
+analysis$cv[analysis$coronary_mi=="Yes"|analysis$stroke=="Yes"]<-1 # combining stroke and coronary. 
 analysis$cv[analysis$coronary_mi=="No"|analysis$stroke=="No"]<-0
 
-analysis$mental_01[analysis$ment_14=="Zero days"]<-0
+analysis$mental_01[analysis$ment_14=="Zero days"]<-0 # colapsing stratums in mental health variable to zero or at least 1. 
 analysis$mental_01[analysis$ment_14!="Zero days"]<-1
 
 # 5. MH analysis ----
@@ -285,6 +315,8 @@ array<-array(mantel_haen_table,
              list(depressive=c("yes", "No"), 
                   op_any=c("Yes", "No"), 
                   confounders= 1:32
-             ))
+             )) # this function rearranges the set of 2by2byk tables created using xtabs to present 
+                # only 3 dimensions, and be included in the epi.2by2() function. 
 
-(epi.2by2(array, method='cohort.count'))
+(epi.2by2(array, method='cohort.count')) # running MH analyses. 
+

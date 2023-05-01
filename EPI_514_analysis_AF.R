@@ -14,15 +14,19 @@
 ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### 
 #
 # Code starts
-# 1 loading data and libraries ----
+# 1. loading data and libraries ----
 
 rm(list=ls())
 setwd("C:/Users/Augusto/OneDrive/r_projects/EPI 514/datasets")
 
-library(tidyverse)
-library(haven)
-library(epiR)
-library(tidyverse)
+library(haven) # importing data from SAS to R
+library(epiR) # MH analyses
+library(tidyverse) # subsetting filtering. 
+library(readxl)  # required for importing zip_codes 
+library(table1) # required for exporting tables in appropriate formatting 
+library(flextable) # required for exporting tables in appropriate formatting 
+library(magrittr) # required for exporting tables in appropriate formatting 
+library(survey) # weighting proportions for table 1.
 
 # a. loading year 2019
 # data is loaded twice to deal with the underscore that some variables present.
@@ -32,6 +36,7 @@ brfss<-read_dta("WA_BRFSS_2019.dta")
 write.csv(brfss, "wa_brfss_2019.csv", row.names = FALSE)
 brfss<-read.csv("wa_brfss_2019.csv", stringsAsFactors = FALSE)
 
+brfss$X_llcpwt<-brfss$X_llcpwt*888/2648 # adjusting the weight to the number of observations/total
 brfss$ststr_year<-brfss$X_ststr+19000000 # we create a variable that adds the year to the stratum of the survey
 
 columns_interest<-c("X_age65yr", "age", "X_race", "sex", "zipcode1", "X_incomg", "X_phys14d", "X_ment14d", "X_michd", 
@@ -47,6 +52,7 @@ brfss<-read_dta("WA_BRFSS_2020.dta")
 write.csv(brfss, "wa_brfss_2020.csv", row.names = FALSE)
 brfss<-read.csv("wa_brfss_2020.csv", stringsAsFactors = FALSE)
 
+brfss$X_llcpwt<-brfss$X_llcpwt*870/2648 # adjusting weight to the number of individuals in final sample
 brfss$ststr_year<-brfss$X_ststr+20000000 # we create a variable that adds the year to the stratum of the survey
 
 merged<-rbind(merged, brfss[,columns_interest]) # data is saved in a merged dataset that will be later filtered
@@ -57,6 +63,7 @@ brfss<-read_dta("WA_BRFSS_2021.dta")
 write.csv(brfss, "wa_brfss_2021.csv", row.names = FALSE)
 brfss<-read.csv("wa_brfss_2021.csv", stringsAsFactors = FALSE)
 
+brfss$X_llcpwt<-brfss$X_llcpwt*881/2648 # adjusting variable weight to the total final n of individuals. 
 brfss$ststr_year<-brfss$X_ststr+21000000 # we create a variable that adds the year to the stratum of the survey
 
 # some column names have changed for year 2021. I create new variables with the prior names to simplify the task:
@@ -68,7 +75,7 @@ brfss$chccopd2<-brfss$chccopd3
 
 merged<-rbind(merged, brfss[,columns_interest])# data is saved in a merged dataset that will be later filtered
 
-# 2 - data cleaning: renaming variables, creating factor variables. ----
+# 2. data cleaning: renaming variables, creating factor variables. ----
 # 39037 individuals. 
 
 copd<-merged[merged$chccopd2==1,] # filtering patients, keeping only those with a diagnosis of COPD
@@ -217,34 +224,67 @@ copd$depressive_01<-factor(copd$depressive_01,
                         levels = 0:1, 
                         labels= c("No", "Yes")) # this variable is coded in 0/1 format
 
+# table 1 formatting 
+zip<-read_xlsx("urban_zip_codes.xlsx") # loading original list of urban codes. 
+                                                # Other codes are considered rural. 
+
+# merging
+copd<-merge(copd, zip, by = "zip", all.x = TRUE) # left-join of the datasets conditional on matching the zip. Thus, the zip that are present in both datasets are coded as 1
+copd$urban[is.na(copd$urban)==TRUE & 
+             is.na(copd$zip)==FALSE]<-0 # this code subsitutes NA in urban as zero 
+                                         # if they are not missing valus at zip. 
+
+# 3. creating table1 and weighting proportions.---- 
+table_one<-table1(~age+race+male+income_cat+urban+coronary_mi+stroke+cancer+arthritis+
+                    diabetes+ckd+smoker+drinking_any+phys_14+ment_14|depressive, data=copd)
+
+t1flex(table_one) %>%save_as_docx(path="table_1.docx")
+
+options(survey.lonely.psu = 'adjust') # survey design features. 
+
+svy_design<-svydesign(data=copd, 
+                      id= ~psu, strata= ~ststr_year, weights = ~llcpwt, 
+                      nest=TRUE)
+
+for (i in names(copd[,c(2:15, 27)])){
+  print(i)
+  formula_str<-paste("~depressive+", i)
+  formula_obj<-as.formula(formula_str)
+  print(
+    prop.table(
+    svytable(formula_obj, design = svy_design), 
+                margin=1)
+  )
+} # this for loop function 
+
+# 4. Preparing data for MH stratified analysis. ----
+
 # removing observations with NAs in depressive or opioid variables
 
 analysis<-copd[!is.na(copd$depressive_01)==T & !is.na(copd$op_any01)==T,]
 
-analysis<-copd[,c("age", "male", "income_cat", "phys_14", "ment_14", "coronary_mi", 
+analysis<-analysis[,c("over_65", "male", "income_cat", "phys_14", "ment_14", "coronary_mi", 
                   "stroke", "cancer",  "arthritis", "ckd", "diabetes", "smoker",  "drinking_any",
-                  "op_any01","depressive_01")]
+                  "op_any", "depressive")]
 
-analysis<-analysis%>%na.omit()
+analysis$cv[analysis$coronary_mi=="Yes"|analysis$stroke=="Yes"]<-1
+analysis$cv[analysis$coronary_mi=="No"|analysis$stroke=="No"]<-0
 
-logistic<-glm(op_any01~., data=analysis, family='binomial')
-summary(logistic)
+analysis$mental_01[analysis$ment_14=="Zero days"]<-0
+analysis$mental_01[analysis$ment_14!="Zero days"]<-1
 
-# now we can plot the data
-predicted_data <- data.frame(
-  probability_op=logistic$fitted.values,
-  op=analysis$op_any01)
+# 5. MH analysis ----
+mantel_haen_table<-xtabs(~depressive+op_any+over_65+male+mental_01+cv+
+                           cancer, data=analysis)
 
-predicted_data <- predicted_data[
-  order(predicted_data$probability_op, decreasing=FALSE),]
-predicted_data$rank <- 1:nrow(predicted_data)
+(mantel_haen_table<-xtabs(~depressive+op_any+over_65+cv+mental_01+cv+
+                            cancer, data=analysis))                       
 
-## Lastly, we can plot the predicted probabilities for each sample having
-## heart disease and color by whether or not they actually had heart disease
-ggplot(data=predicted_data, aes(x=rank, y=probability_op)) +
-  geom_point(aes(color=op), alpha=1, shape=4, stroke=2) +
-  xlab("Index") +
-  ylab("Predicted probability opioid use")
-summary(logistic)
-confint(logistic)
+array<-array(mantel_haen_table,
+             dim=c(2,2,32), 
+             list(depressive=c("yes", "No"), 
+                  op_any=c("Yes", "No"), 
+                  confounders= 1:32
+             ))
 
+(epi.2by2(array, method='cohort.count'))

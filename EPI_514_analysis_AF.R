@@ -273,48 +273,21 @@ svy_design<-svydesign(data=copd,
                       id= ~psu, strata= ~ststr_year, weights = ~llcpwt, 
                       nest=TRUE) # setting survey design
 
-for (i in names(copd[,c(2:17,26:29)])){
-  print(i)
-  formula_str<-paste("~depressive+", i)
-  formula_obj<-as.formula(formula_str)
+for (i in names(copd[,c(2:17,26:29)])){ # selecting columns of interest to run the loop
+  print(i) # points the name of the variable that is being addressed
+  formula_str<-paste("~depressive+", i) # First, we create a string object to merge with the name of the column
+  formula_obj<-as.formula(formula_str) # to svytable() to work, we need to convert the strings in formulas/objects
   print(
     prop.table(
-    svytable(formula_obj, design = svy_design), 
-                margin=1)
+    svytable(formula_obj, design = svy_design),  # running function of interest
+                margin=1) 
   )
+  rm(formula_str, formula_obj) # removing objects created.
 } # this for loop function runs the function svytable across the columns of interest. 
 
 # separate procedure for income categories including NAs. 
 prop.table(svytable(~depressive+income_na,design=svy_design), margin=1) # Weighted % to be used in the table 1. 
 
-# 4. Preparing data for MH stratified analysis. ----
+write_rds(copd, "copd_clean.rds") # saving clean version
 
-# removing observations with NAs in depressive or opioid variables
-
-analysis<-copd[,c("over_65", "male", "income_cat", "phys_14", "ment_14", "coronary_mi", 
-                  "stroke", "cancer",  "arthritis", "ckd", "diabetes", "smoker",  "drinking_any",
-                  "op_any", "depressive")]
-
-analysis$cv[analysis$coronary_mi=="Yes"|analysis$stroke=="Yes"]<-1 # combining stroke and coronary. 
-analysis$cv[analysis$coronary_mi=="No"|analysis$stroke=="No"]<-0
-
-analysis$mental_01[analysis$ment_14=="Zero days"]<-0 # colapsing stratums in mental health variable to zero or at least 1. 
-analysis$mental_01[analysis$ment_14!="Zero days"]<-1
-
-# 5. MH analysis ----
-mantel_haen_table<-xtabs(~depressive+op_any+over_65+male+mental_01+cv+
-                           cancer, data=analysis)
-
-(mantel_haen_table<-xtabs(~depressive+op_any+over_65+cv+mental_01+cv+
-                            cancer, data=analysis))                       
-
-array<-array(mantel_haen_table,
-             dim=c(2,2,32), 
-             list(depressive=c("yes", "No"), 
-                  op_any=c("Yes", "No"), 
-                  confounders= 1:32
-             )) # this function rearranges the set of 2by2byk tables created using xtabs to present 
-                # only 3 dimensions, and be included in the epi.2by2() function. 
-
-(epi.2by2(array, method='cohort.count')) # running MH analyses. 
-
+# end of R script. 

@@ -95,9 +95,9 @@ zip<-read_xlsx("urban_zip_codes.xlsx") # loading original list of urban codes.
 
 # merging
 copd<-merge(copd, zip, by = "zip", all.x = TRUE) # left-join of the datasets conditional on matching the zip. Thus, the zip that are present in both datasets are coded as 1
-copd$urban[is.na(copd$urban)==TRUE & 
-             is.na(copd$zip)==FALSE]<-0 # this code subsitutes NA in urban as zero 
-# if they are not missing valus at zip. 
+copd$urban[is.na(copd$urban)==TRUE]<-0 # this code subsitutes NA in urban as zero 
+copd$urban[copd$zip==99999|copd$zip==77777]<-NA # replacing NAs. 
+
 rm(zip)
 
 # cleaning one by one and recategorizing as factors
@@ -120,8 +120,6 @@ copd$male[copd$male==2]<-0 # re-coding 2 as 0 (females)
 copd$male<-factor(copd$male, 
                   levels=0:1, 
                   labels=c("Female", "Male")) # re-coding as factor variable Female vs Male
-
-copd$zip[copd$zip==77777|copd$zip==99999]<-NA # re-coding NAs
 
 copd$income_cat[copd$income_cat==9]<-NA # re-coding missing as NA
 copd$income_cat[copd$income_cat==6|copd$income_cat==7]<-5 # variables 6 and 7 were introduced in 2021, corresponding to >100 and 200000 us dollars
@@ -255,7 +253,7 @@ copd$any_chronic<-factor(copd$any_chronic,
                          labels=c("No", "Yes"))
 
 # 3. creating table1 and weighting proportions.---- 
-copd<-copd[!is.na(copd$depressive_01)==T & !is.na(copd$op_any01)==T,]
+copd<-copd[!is.na(copd$depressive_01)==T & !is.na(copd$op_any01)==T,] # keeping observations without missing data for main exposure and outcome. 
 
 table_one<-table1(~age+over_65+race+male+income_cat+urban+coronary_mi+stroke+cancer+arthritis+
                     diabetes+ckd+smoker+drinking_any+phys_14+ment_14+age_group+any_chronic|depressive, data=copd)
@@ -275,7 +273,7 @@ svy_design<-svydesign(data=copd,
                       id= ~psu, strata= ~ststr_year, weights = ~llcpwt, 
                       nest=TRUE) # setting survey design
 
-for (i in names(copd[,c(2:16,28, 29)])){
+for (i in names(copd[,c(2:17,26:29)])){
   print(i)
   formula_str<-paste("~depressive+", i)
   formula_obj<-as.formula(formula_str)
@@ -287,7 +285,7 @@ for (i in names(copd[,c(2:16,28, 29)])){
 } # this for loop function runs the function svytable across the columns of interest. 
 
 # separate procedure for income categories including NAs. 
-prop.table(svytable(~income_na+depressive,design=svy_design), margin=2) # Weighted % to be used in the table 1. 
+prop.table(svytable(~depressive+income_na,design=svy_design), margin=1) # Weighted % to be used in the table 1. 
 
 # 4. Preparing data for MH stratified analysis. ----
 

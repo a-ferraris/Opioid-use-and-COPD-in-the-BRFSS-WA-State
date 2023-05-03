@@ -100,6 +100,12 @@ copd$urban[copd$zip==99999|copd$zip==77777]<-NA # replacing NAs.
 
 rm(zip)
 
+# creating counties
+counties<-read.csv("counties.csv")
+copd<-merge(copd, counties, by="zip", all.x = TRUE)
+
+rm(counties)
+
 # cleaning one by one and recategorizing as factors
 
 copd$over_65[copd$over_65==3]<-NA # re-coding 3 (refused) as NA
@@ -252,6 +258,8 @@ copd$any_chronic<-factor(copd$any_chronic,
                          levels=0:1, 
                          labels=c("No", "Yes"))
 
+copd$county<-as.factor(copd$county)
+
 # 3. creating table1 and weighting proportions.---- 
 copd<-copd[!is.na(copd$depressive_01)==T & !is.na(copd$op_any01)==T,] # keeping observations without missing data for main exposure and outcome. 
 
@@ -274,10 +282,10 @@ svy_design<-svydesign(data=copd,
                       nest=TRUE) # setting survey design
 
 for (i in names(copd[,c(2:17,26:29)])){ # selecting columns of interest to run the loop
-  print(i) # points the name of the variable that is being addressed
-  formula_str<-paste("~depressive+", i) # First, we create a string object to merge with the name of the column
-  formula_obj<-as.formula(formula_str) # to svytable() to work, we need to convert the strings in formulas/objects
-  print(
+    print(i) # points the name of the variable that is being addressed
+    formula_str<-paste("~depressive+", i) # First, we create a string object to merge with the name of the column
+    formula_obj<-as.formula(formula_str) # to svytable() to work, we need to convert the strings in formulas/objects
+    print(
     prop.table(
     svytable(formula_obj, design = svy_design),  # running function of interest
                 margin=1) 

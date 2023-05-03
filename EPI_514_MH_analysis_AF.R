@@ -30,20 +30,20 @@ copd<-read_rds("copd_clean.rds")
 
 analysis<-copd[,c("over_65", "age", "male", "income_cat", "phys_14", "ment_14", "coronary_mi", 
                   "stroke", "cancer",  "arthritis", "ckd", "diabetes", "smoker",  "drinking_any",
-                  "op_any", "depressive", "any_chronic", "urban", "op_any01", "depressive_01")]
+                  "op_any", "depressive", "any_chronic", "urban", "op_any01", "depressive_01", "county")]
 
 urban<-analysis[analysis$urban=="Urban",]
 rural<-analysis[analysis$urban=="Rural",]
 
 # 5. MH analysis ----
-(mantel_haen_table<-xtabs(~depressive+op_any+over_65+male+mental_01+any_chronic,
+(mantel_haen_table<-xtabs(~depressive+op_any+over_65+male+any_chronic,
                           data=analysis))
 
 array<-array(mantel_haen_table,
-             dim=c(2,2,16), 
+             dim=c(2,2,8), 
              list(depressive=c("yes", "No"), 
                   op_any=c("Yes", "No"), 
-                  confounders= 1:16
+                  confounders= 1:8
              )) # this function rearranges the set of 2by2byk tables created using xtabs to present 
 # only 3 dimensions, and be included in the epi.2by2() function. 
 
@@ -74,3 +74,5 @@ array_rural<-array(mantel_rural,
                    )) # this function rearranges the set of 2by2byk tables created using xtabs to present 
 
 epi.2by2(array_rural, method = 'cohort.count')
+
+# 

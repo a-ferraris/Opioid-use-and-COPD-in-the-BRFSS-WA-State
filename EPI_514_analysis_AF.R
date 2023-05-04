@@ -31,12 +31,13 @@ library(survey) # weighting proportions for table 1.
 # a. loading year 2019
 # data is loaded twice to deal with the underscore that some variables present.
 # by doing so we avoid the use of variables with quotes
-
+# year 2019 has 12993 observations | year 2020 12902 observations | and year 2021 13142 observations
+# total 39037
 brfss<-read_dta("WA_BRFSS_2019.dta")
 write.csv(brfss, "wa_brfss_2019.csv", row.names = FALSE)
 brfss<-read.csv("wa_brfss_2019.csv", stringsAsFactors = FALSE)
 
-brfss$X_llcpwt<-brfss$X_llcpwt*888/2648 # adjusting the weight to the number of observations/total
+brfss$X_llcpwt<-brfss$X_llcpwt*12993/39037 # adjusting the weight to the number of observations/total
 brfss$ststr_year<-brfss$X_ststr+19000000 # we create a variable that adds the year to the stratum of the survey
 
 columns_interest<-c("X_age65yr", "age", "X_race", "sex", "zipcode1", "X_incomg", "X_phys14d", "X_ment14d", "X_michd", 
@@ -52,7 +53,7 @@ brfss<-read_dta("WA_BRFSS_2020.dta")
 write.csv(brfss, "wa_brfss_2020.csv", row.names = FALSE)
 brfss<-read.csv("wa_brfss_2020.csv", stringsAsFactors = FALSE)
 
-brfss$X_llcpwt<-brfss$X_llcpwt*870/2648 # adjusting weight to the number of individuals in final sample
+brfss$X_llcpwt<-brfss$X_llcpwt*12902/39037 # adjusting weight to the number of individuals in final sample
 brfss$ststr_year<-brfss$X_ststr+20000000 # we create a variable that adds the year to the stratum of the survey
 
 merged<-rbind(merged, brfss[,columns_interest]) # data is saved in a merged dataset that will be later filtered
@@ -63,7 +64,7 @@ brfss<-read_dta("WA_BRFSS_2021.dta")
 write.csv(brfss, "wa_brfss_2021.csv", row.names = FALSE)
 brfss<-read.csv("wa_brfss_2021.csv", stringsAsFactors = FALSE)
 
-brfss$X_llcpwt<-brfss$X_llcpwt*881/2648 # adjusting variable weight to the total final n of individuals. 
+brfss$X_llcpwt<-brfss$X_llcpwt*13142/39037 # adjusting variable weight to the total final n of individuals. 
 brfss$ststr_year<-brfss$X_ststr+21000000 # we create a variable that adds the year to the stratum of the survey
 
 # some column names have changed for year 2021. I create new variables with the prior names to simplify the task:
@@ -260,7 +261,10 @@ copd$any_chronic<-factor(copd$any_chronic,
 
 copd$county<-as.factor(copd$county)
 
+table(copd$depressive, copd$op_any, useNA = 'always', deparse.level = 2)
+
 # 3. creating table1 and weighting proportions.---- 
+
 copd<-copd[!is.na(copd$depressive_01)==T & !is.na(copd$op_any01)==T,] # keeping observations without missing data for main exposure and outcome. 
 
 table_one<-table1(~age+over_65+race+male+income_cat+urban+coronary_mi+stroke+cancer+arthritis+

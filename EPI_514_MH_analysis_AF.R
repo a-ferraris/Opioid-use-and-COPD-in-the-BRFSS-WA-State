@@ -10,7 +10,7 @@
 # Program outline:
 # 1.MH pooled analysis
 # 2. rural vs urban stratified estimates.
-# 3. 
+# 3. dose-response analysis
 ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### 
 #
 # Code starts
@@ -30,7 +30,7 @@ copd<-read_rds("copd_clean.rds")
 
 analysis<-copd[,c("over_65", "age", "male", "income_cat", "phys_14", "ment_14", "coronary_mi", 
                   "stroke", "cancer",  "arthritis", "ckd", "diabetes", "smoker",  "drinking_any",
-                  "op_any", "depressive", "any_chronic", "urban", "op_any01", "depressive_01", "county")]
+                  "op_any", "depressive", "any_chronic", "urban", "op_any01", "depressive_01", "county", "pneuvac4")]
 
 analysis$phys_bin[analysis$phys_14=="Zero days"|analysis$phys_14=="1 to 13 days"]<-0
 analysis$phys_bin[analysis$phys_14=="14 or more days"]<-1
@@ -53,6 +53,8 @@ array_mh_1<-array(mh_1,
              )) # this function rearranges the set of 2by2byk tables created using xtabs to present 
 # only 3 dimensions, and be included in the epi.2by2() function. 
 (epi.2by2(array_mh_1, method='cohort.count')) # running MH analyses. 
+
+
 
 
 # secondary analyses
@@ -122,4 +124,77 @@ array_13<-array(mh_13,
 
 epi.2by2(array_13, method = 'cohort.count')
 
+# positive control 
+positive<-analysis[,c("over_65", "depressive", "op_any", "phys_bin", "male", "any_chronic","pneuvac4")]
 
+(mh_positive<-xtabs(~depressive+pneuvac4+over_65+male+any_chronic+phys_bin,
+              data=positive))
+
+array_13<-array(mh_13,
+                dim=c(2,2,16), 
+                list(depressive=c("yes", "No"), 
+                     pneuvac4=c("Yes", "No"), 
+                     confounders= 1:16
+                )) 
+
+epi.2by2(array_13, method = 'cohort.count')
+
+# sensitivity analyses
+rm(list=ls())
+op_one<-read.csv("copd_na_equals_one.csv")
+
+analysis<-op_one[,c("over_65", "age", "male", "income_cat", "phys_14", "ment_14", "coronary_mi", 
+                  "stroke", "cancer",  "arthritis", "ckd", "diabetes", "smoker",  "drinking_any",
+                  "op_any", "depressive", "any_chronic", "urban", "op_any01", "depressive_01")]
+
+analysis$phys_bin[analysis$phys_14=="Zero days"|analysis$phys_14=="1 to 13 days"]<-0
+analysis$phys_bin[analysis$phys_14=="14 or more days"]<-1
+
+op_one<-analysis[,c("over_65", "depressive", "op_any", "phys_bin", "male", "any_chronic")]
+
+#  MH analysis ----
+(mh_op_one<-xtabs(~depressive+op_any+over_65+male+any_chronic+phys_bin,
+             data=op_one))
+
+array_mh_op_one<-array(mh_op_one,
+                  dim=c(2,2,16), 
+                  list(depressive=c("yes", "No"), 
+                       op_any=c("Yes", "No"), 
+                       confounders= 1:16
+                  )) # this function rearranges the set of 2by2byk tables created using xtabs to present 
+# only 3 dimensions, and be included in the epi.2by2() function. 
+
+(epi.2by2(array_mh_op_one, method='cohort.count')) # running MH analyses. 
+
+
+# now second sensitivity analysis
+
+rm(list=ls())
+op_two<-read.csv("copd_na_equals_two.csv")
+
+analysis<-op_two[,c("over_65", "age", "male", "income_cat", "phys_14", "ment_14", "coronary_mi", 
+                    "stroke", "cancer",  "arthritis", "ckd", "diabetes", "smoker",  "drinking_any",
+                    "op_any", "depressive", "any_chronic", "urban", "op_any01", "depressive_01")]
+
+analysis$phys_bin[analysis$phys_14=="Zero days"|analysis$phys_14=="1 to 13 days"]<-0
+analysis$phys_bin[analysis$phys_14=="14 or more days"]<-1
+
+op_two<-analysis[,c("over_65", "depressive", "op_any", "phys_bin", "male", "any_chronic")]
+
+#  MH analysis ----
+(mh_op_two<-xtabs(~depressive+op_any+over_65+male+any_chronic+phys_bin,
+                  data=op_two))
+
+array_mh_op_two<-array(mh_op_two,
+                       dim=c(2,2,16), 
+                       list(depressive=c("yes", "No"), 
+                            op_any=c("Yes", "No"), 
+                            confounders= 1:16
+                       )) # this function rearranges the set of 2by2byk tables created using xtabs to present 
+# only 3 dimensions, and be included in the epi.2by2() function. 
+
+(epi.2by2(array_mh_op_two, method='cohort.count')) # running MH analyses. 
+
+
+
+# end of R script

@@ -1,18 +1,24 @@
 ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### 
-# Author: Augusto Ferraris
+# Author: Augusto Ferraris, MD - UBA / MPH(C) - University of Washington, Seattle
 # Contact information: aferra@uw.edu
 # Date: June 2023
 #
-# Purpose: to write an script for importing, cleaning, and reshaping  variables in the BRFSS dataset. 
+# Background:Opioids are commonly prescribed to patients with Chronic Obstructive Pulmonary Disease (COPD). 
+# Likewise, patients with depressive disorders are prescribed opioids more frequently than those without. 
+# Opioid use is associated with poor clinical outcomes in both populations. However, the risk of opioid use among individuals with both COPD and depressive disorders has not been evaluated. 
 #
-# History: this code  was written as part of the evaluation of the course EPI 514, spring 2023 at University of Washington.
+# Aim: This study evaluated the prevalence of opioid use among individuals living with COPD comparing those with and without depressive disorders.
+#
+# We analyzed pooled cross-sectional data from the Behavioral and Risk Factor Surveillance System in Washington State 2019-2021. We fitted a multivariate Poisson regression model to estimate weighted Prevalence Ratios (PR). 
+# In addition, we assessed for effect modification of the association between depressive disorders and opioid use by urbanicity of residence and ays of poor mental health. 
 #
 # Program outline:
 # 1. Data import. libraries. Data merging
 # 2. Data cleaning, labeling, factorizing variables
 # 3. Preparing for analysis: creating dataset with extreme case scenarios. 
-# 4. Data weighting: Weighting prevalences and estimating proportions ----
-# 5. Data analysis: main analysis and sensitivity analyses ----
+# 4. Data weighting: Weighting prevalences and estimating proportions 
+# 5. Data analysis: main analysis and sensitivity analyses 
+#    a) crude analysis, b)adjusted mainanalysis, c)interaction models, d)sensitivity analysis
 ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### 
 #
 # Code starts
@@ -287,7 +293,7 @@ rm(table_one)
 # storing results in a object type "list"
 results<-list()
 
-# a. crude. 
+# a. crude. ----
 # to run poisson, we must convert some variables to numeric back again: 
 results$models$poisson_crude <- svyglm(op_numeric~depressive_numeric,
                                        family=poisson, design = svy_design)
@@ -295,7 +301,7 @@ results$models$poisson_crude <- svyglm(op_numeric~depressive_numeric,
 results$pr$crude<-exp(cbind(coef(results$models$poisson_crude), 
                             coefci(results$models$poisson_crude)))
 
-# b. main analysis: adjusted fully
+# b. main analysis: adjusted fully ----
 results$models$poisson_adj <- svyglm(op_numeric~depressive_numeric+factor(male)+age+
                                        factor(stroke)+ factor(rural)+
                                        factor(coronary_mi)+phys_health+ment_health+
@@ -306,7 +312,7 @@ results$models$poisson_adj <- svyglm(op_numeric~depressive_numeric+factor(male)+
 results$pr$poisson_adj<-exp(cbind(coef(results$models$poisson_adj), 
                                   coefci(results$models$poisson_adj)))
 
-# c. interaction models 
+# c. interaction models ----
 results$models$int_rural <- svyglm(op_numeric~depressive_numeric*rural+factor(male)+age+
                                      factor(stroke)+
                                      factor(coronary_mi)+phys_health+ment_health+
@@ -364,7 +370,7 @@ results$pr$int_mental_14plus<-cbind(stratum[,1],
                                   stratum[,1]-1.96*stratum[,2], 
                                   stratum[,1]+1.96*stratum[,2])
 
-# d. sensitivity analyses: least and most
+# d. sensitivity analyses: least and most----
 # least scenario
 results$models$poisson_least <- svyglm(op_numeric~depressive_numeric+factor(male)+age+
                                        factor(stroke)+ factor(rural)+
@@ -382,7 +388,7 @@ results$models$poisson_most <- svyglm(op_numeric~depressive_numeric+factor(male)
                                          factor(coronary_mi)+phys_health+ment_health+
                                          factor(cancer)+factor(arthritis)+factor(ckd)+factor(diabetes)+
                                          factor(smoking_100)+factor(drinking_any),
-                                       family=poisson, design = design_most)
+                                         family=poisson, design = design_most)
 
 results$pr$poisson_most<-exp(cbind(coef(results$models$poisson_most), 
                                     coefci(results$models$poisson_most)))

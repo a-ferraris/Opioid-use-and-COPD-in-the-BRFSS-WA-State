@@ -208,6 +208,9 @@ copd$ment_health[copd$ment_health==88]<-0 # formating from 0 to 30
 
 copd$copd<-NULL
 
+copd$ment_binary[copd$ment_14=="1 to 13 days"|copd$ment_14=="Zero days"]<-0
+copd$ment_binary[copd$ment_14=="14 or more days"]<-1
+
 # to run poisson later, we create some variables that will be used for analysis
 copd$op_numeric[copd$op_any=="No"]<-0
 copd$op_numeric[copd$op_any=="Yes"]<-1
@@ -221,6 +224,17 @@ copd$rural[copd$urban=="Rural"]<-1
 # 3. Preparing for analysis: creating dataset with extreme case scenarios ----
 most<-copd
 least<-copd
+
+# most conservative scenario: here the patients with missing data on opioid use
+# and depressive disorders present, are considered as not having the outcome. Conversely, 
+# patients with missing data on opioids and no depressive disorders are considered having the outcome
+most$op_numeric[most$depressive_numeric==1 & is.na(most$op_numeric)==TRUE]<-0
+most$op_numeric[most$depressive_numeric==0 & is.na(most$op_numeric)==TRUE]<-1
+
+most<-most[!is.na(most$depressive)==T,]
+
+least$op_numeric[least$depressive_numeric==1 & is.na(least$op_numeric)==TRUE]<-1
+least$op_numeric[least$depressive_numeric==0 & is.na(least$op_numeric)==TRUE]<-0
 
 copd<-copd[!is.na(copd$depressive)==T & !is.na(copd$op_any)==T,] # keeping observations without missing data for main exposure and outcome. 
 
@@ -239,6 +253,15 @@ options(survey.lonely.psu = 'adjust') # survey design features.
 svy_design<-svydesign(data=copd, 
                       id= ~1, strata= ~ststr_year, weights = ~llcpwt, 
                       nest=TRUE) # setting survey design
+
+design_most<-svydesign(data=most, 
+                        id=~1, strata= ~ststr_year, weights= ~llcpwt, 
+                        nest=TRUE)
+
+design_least<-svydesign(data=least, 
+                       id=~1, strata= ~ststr_year, weights= ~llcpwt, 
+                       nest=TRUE)
+
 
 # to obtain weighted %, we use a loop function:
 # this for loop function runs the function svytable across the columns of interest. 
@@ -274,7 +297,7 @@ results$pr$crude<-exp(cbind(coef(results$models$poisson_crude),
 
 # b. main analysis: adjusted fully
 results$models$poisson_adj <- svyglm(op_numeric~depressive_numeric+factor(male)+age+
-                                       factor(stroke)+
+                                       factor(stroke)+ factor(rural)+
                                        factor(coronary_mi)+phys_health+ment_health+
                                        factor(cancer)+factor(arthritis)+factor(ckd)+factor(diabetes)+
                                        factor(smoking_100)+factor(drinking_any),
@@ -294,7 +317,7 @@ results$models$int_rural <- svyglm(op_numeric~depressive_numeric*rural+factor(ma
 stratum<-data.frame(exp(svycontrast(results$models$int_rural, contrasts=c(0,1,0,0,0,
                                                                           0,0,0,0,0,
                                                                           0,0,0,0,0,
-                                                                          0,0,0,0,1)) # rural stratum-specific PR for depressive-opioid
+                                                                          1)) # rural stratum-specific PR for depressive-opioid
 ))
 
 results$pr$int_rural_rural<-cbind(stratum[,1], 
@@ -305,11 +328,61 @@ results$pr$int_rural_rural<-cbind(stratum[,1],
 stratum<-data.frame(exp(svycontrast(results$models$int_rural, contrasts=c(0,1,0,0,0,
                                                                           0,0,0,0,0,
                                                                           0,0,0,0,0,
-                                                                          0,0,0,0,0)) # urban stratum-specific PR for depressive-opioid
+                                                                          0)) # urban stratum-specific PR for depressive-opioid
 ))
 
 results$pr$int_rural_urban<-cbind(stratum[,1], 
                                   stratum[,1]-1.96*stratum[,2], 
                                   stratum[,1]+1.96*stratum[,2])
 
-# 
+# Interaction model with 14+ days of mental health. 
+
+results$models$int_mental <- svyglm(op_numeric~depressive_numeric*ment_binary+factor(male)+age+
+                                     factor(stroke)+factor(rural)+
+                                     factor(coronary_mi)+phys_health+
+                                     factor(cancer)+factor(arthritis)+factor(ckd)+factor(diabetes)+
+                                     factor(smoking_100)+factor(drinking_any),
+                                     family=poisson, design = svy_design)
+
+stratum<-data.frame(exp(svycontrast(results$models$int_mental, contrasts=c(0,1,0,0,0,
+                                                                          0,0,0,0,0,
+                                                                          0,0,0,0,0,
+                                                                          0)) # individuals with zero to 13 days of poor ment health
+))
+
+results$pr$int_mental_zero<-cbind(stratum[,1], 
+                                  stratum[,1]-1.96*stratum[,2], 
+                                  stratum[,1]+1.96*stratum[,2])
+
+stratum<-data.frame(exp(svycontrast(results$models$int_mental, contrasts=c(0,1,0,0,0,
+                                                                           0,0,0,0,0,
+                                                                           0,0,0,0,0,
+                                                                           1)) # individuals with 14+ days of poor ment health
+))
+
+results$pr$int_mental_14plus<-cbind(stratum[,1], 
+                                  stratum[,1]-1.96*stratum[,2], 
+                                  stratum[,1]+1.96*stratum[,2])
+
+# d. sensitivity analyses: least and most
+# least scenario
+results$models$poisson_least <- svyglm(op_numeric~depressive_numeric+factor(male)+age+
+                                       factor(stroke)+ factor(rural)+
+                                       factor(coronary_mi)+phys_health+ment_health+
+                                       factor(cancer)+factor(arthritis)+factor(ckd)+factor(diabetes)+
+                                       factor(smoking_100)+factor(drinking_any),
+                                       family=poisson, design = design_least)
+
+results$pr$poisson_least<-exp(cbind(coef(results$models$poisson_least), 
+                                  coefci(results$models$poisson_least)))
+
+# most scenario
+results$models$poisson_most <- svyglm(op_numeric~depressive_numeric+factor(male)+age+
+                                         factor(stroke)+ factor(rural)+
+                                         factor(coronary_mi)+phys_health+ment_health+
+                                         factor(cancer)+factor(arthritis)+factor(ckd)+factor(diabetes)+
+                                         factor(smoking_100)+factor(drinking_any),
+                                       family=poisson, design = design_most)
+
+results$pr$poisson_most<-exp(cbind(coef(results$models$poisson_most), 
+                                    coefci(results$models$poisson_most)))

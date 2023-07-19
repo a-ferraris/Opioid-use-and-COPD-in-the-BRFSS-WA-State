@@ -386,34 +386,33 @@ results$models$adj_unw <- glm(op_numeric~depressive_numeric+factor(male)+age+
 results$pr$adj_unw<-exp(cbind(coef(results$models$adj_unw), 
                                 coefci(results$models$adj_unw)))
 
-# third, using multiple imputation 
-
+# third, using multiple imputation by chained equations
 mice1<-mice[,c("depressive", "male", "age", 
                 "stroke", "coronary_mi", "diabetes",
                 "cancer", "arthritis", "ckd", "smoking_100","phys_health",
-               "urban", "op_any")] # variables to be imputed
+               "urban", "op_any")] # variables to be used to impute op_any and urban. ORDER may change the results
 
 # model 
-n_imputations<-20
+n_imputations<-20 #  number of iterations. 
 
-plot_missing(mice1)
+plot_missing(mice1) # overview of Missingness in the dataset
 
 imp <- mice(mice1, seed = 123, m = n_imputations, method= c("","","","",
                                                             "","","","","",
-                                                            "","","logreg","pmm"), print = FALSE)
+                                                            "","","logreg","pmm"), print = FALSE) # the methods were selected after an iterative process
 
-plot(imp)
+plot(imp) # evaluation of MICE
 
 fit <- with(imp, glm(as.numeric(op_any)-1 ~ depressive+phys_health+factor(male)+age+
                        factor(stroke)+ factor(coronary_mi)+
                        factor(cancer)+factor(arthritis)+
                        factor(ckd)+factor(diabetes)+factor(smoking_100),
-                       family=poisson))
+                       family=poisson)) # fitting model to every imputed dataset
 
-est <- pool(fit)
+est <- pool(fit) # pooling the result estimates
 summary(est)
-exp(est$pooled$estimate[2])
-exp(est$pooled$estimate[2]+1.96*0.089279593)  
-exp(est$pooled$estimate[2]-1.96*0.089279593)  
+exp(est$pooled$estimate[2]) # exposure of interest
+exp(est$pooled$estimate[2]+1.96*0.089279593)   # 95% CI UL
+exp(est$pooled$estimate[2]-1.96*0.089279593)   # 95% CI LL
 
 # end of R script. 

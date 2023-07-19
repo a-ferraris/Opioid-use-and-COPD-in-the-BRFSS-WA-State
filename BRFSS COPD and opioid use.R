@@ -19,19 +19,25 @@
 # 4. Data weighting: Weighting prevalences and estimating proportions 
 # 5. Data analysis: main analysis and sensitivity analyses 
 #    a) crude analysis, b)adjusted mainanalysis, c)interaction models, d)sensitivity analysis
+# 6. Multiple Imputation using mice()
 ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### 
 #
 # Code starts
 # 1. Data import. libraries. Data merging ----
 rm(list=ls())
-setwd("C:/Users/Augusto/OneDrive/r_projects/EPI 514/datasets")
+setwd("C:/Users/augus/OneDrive/r_projects/EPI 514/datasets")
 library(haven) # importing data from SAS to R
 library(epiR) # MH analyses
 library(tidyverse) # subsetting filtering. 
 library(table1) # required for exporting tables in appropriate formatting 
 library(survey) # weighting proportions for table 1.
 library(lmtest) # to run poisson with weights
+library(mice) # sensitivity analysis using multiple imputation
+library(DataExplorer) # evaulation of NAs in mice
+library(randomForest) # multiple imputation
+library(VIM) # multiple imputation
 
+#
 # a. loading year 2019
 # data is loaded twice to deal with the underscore that some variables present in their labels.
 # by doing so we avoid the use of variables with quotes and send to lower case
@@ -174,7 +180,7 @@ copd$op_any[copd$op_any==7|copd$op_any==9]<-NA # re-coding missing data
 copd$op_any[copd$op_any==2]<-0 # re coding to 0/1 format
 copd$op_any<-factor(copd$op_any, 
                       levels=0:1, 
-                      labels = c("No", "Yes")) # this variable stays in 1/2 format to fit in epi.2by2() function
+                      labels = c("No", "Yes")) 
 
 copd$urban[copd$urban==2]<-0
 copd$urban<-factor(copd$urban, 
@@ -185,7 +191,7 @@ copd$depressive[copd$depressive==7|copd$depressive==9]<-NA # re-coding refused o
 copd$depressive[copd$depressive==2]<-0 # recoding to 0/1 format
 copd$depressive<-factor(copd$depressive, 
                         levels = 0:1, 
-                        labels= c("No", "Yes")) # this variable stays in 1/2 format to fit in epi.2by2() function
+                        labels= c("No", "Yes")) 
 
 table(copd$depressive, copd$op_any, deparse.level = 2, useNA = 'always')
 
@@ -207,12 +213,12 @@ copd$any_chronic<-factor(copd$any_chronic,
                          labels=c("No", "Yes"))
 
 copd$phys_health[copd$phys_health==99|copd$phys_health==77]<-NA # re-coding NA
-copd$phys_health[copd$phys_health==77]<-0 # formating from 0 to 30
+copd$phys_health[copd$phys_health==88]<-0 # formating from 0 to 30
 
 copd$ment_health[copd$ment_health==99|copd$ment_health==77]<-NA # re-coding NA
 copd$ment_health[copd$ment_health==88]<-0 # formating from 0 to 30
 
-copd$copd<-NULL
+copd$copd<-NULL # no longer needed, it is a constant
 
 copd$ment_binary[copd$ment_14=="1 to 13 days"|copd$ment_14=="Zero days"]<-0
 copd$ment_binary[copd$ment_14=="14 or more days"]<-1
@@ -227,28 +233,17 @@ copd$depressive_numeric[copd$depressive=="Yes"]<-1
 copd$rural[copd$urban=="Urban"]<-0
 copd$rural[copd$urban=="Rural"]<-1
 
-# 3. Preparing for analysis: creating dataset with extreme case scenarios ----
-most<-copd
-least<-copd
-
-# most conservative scenario: here the patients with missing data on opioid use
-# and depressive disorders present, are considered as not having the outcome. Conversely, 
-# patients with missing data on opioids and no depressive disorders are considered having the outcome
-most$op_numeric[most$depressive_numeric==1 & is.na(most$op_numeric)==TRUE]<-0
-most$op_numeric[most$depressive_numeric==0 & is.na(most$op_numeric)==TRUE]<-1
-
-most<-most[!is.na(most$depressive)==T,]
-
-least$op_numeric[least$depressive_numeric==1 & is.na(least$op_numeric)==TRUE]<-1
-least$op_numeric[least$depressive_numeric==0 & is.na(least$op_numeric)==TRUE]<-0
+# 3. Preparing for analysis: creating dataset for multiple imputation ----
+mice<-copd
 
 copd<-copd[!is.na(copd$depressive)==T & !is.na(copd$op_any)==T,] # keeping observations without missing data for main exposure and outcome. 
 
 # 4. creating table 1
-# table_one<-table1(~age+race+male+income_cat+urban+coronary_mi+stroke+cancer+arthritis+
-#                    diabetes+ckd+smoking_100+drinking_any+phys_14+ment_14+any_chronic|depressive, data=copd)
-# table_one
-
+ table_one<-table1(~age+race+male+income_cat+urban+coronary_mi+stroke+cancer+arthritis+
+                    diabetes+ckd+smoking_100+drinking_any+phys_14+ment_14+any_chronic|depressive, data=copd)
+ table_one
+ 
+ 
 # income has >5% of missing data. so we create a variable with missing as a category
 copd$income_na<-as.numeric(copd$income_cat) # creating new var as numeric
 copd$income_na[is.na(copd$income_na)==TRUE]<-9 # replacing missing as 9 category to be weighted later
@@ -260,18 +255,9 @@ svy_design<-svydesign(data=copd,
                       id= ~1, strata= ~ststr_year, weights = ~llcpwt, 
                       nest=TRUE) # setting survey design
 
-design_most<-svydesign(data=most, 
-                        id=~1, strata= ~ststr_year, weights= ~llcpwt, 
-                        nest=TRUE)
-
-design_least<-svydesign(data=least, 
-                       id=~1, strata= ~ststr_year, weights= ~llcpwt, 
-                       nest=TRUE)
-
-
 # to obtain weighted %, we use a loop function:
 # this for loop function runs the function svytable across the columns of interest. 
-for (i in names(copd[,c(1:4,6:16,19,21:22)])){ # selecting columns of interest to run the loop
+for (i in names(copd[,c(1:4,6:16,19,24:28)])){ # selecting columns of interest to run the loop
   print(i) # points the name of the variable that is being addressed
   formula_str<-paste("~depressive+", i) # First, we create a string object to merge with the name of the column
   formula_obj<-as.formula(formula_str) # to svytable() to work, we need to convert the strings in formulas/objects
@@ -283,17 +269,31 @@ for (i in names(copd[,c(1:4,6:16,19,21:22)])){ # selecting columns of interest t
   rm(formula_str, formula_obj,i) # removing objects created.
 }
 
+for (i in names(copd[,c(1:4,6:16,19,24:28)])){ # selecting columns of interest to run the loop
+  print(i) # points the name of the variable that is being addressed
+  formula_str<-paste("~", i) # First, we create a string object to merge with the name of the column
+  formula_obj<-as.formula(formula_str) # to svytable() to work, we need to convert the strings in formulas/objects
+  print(
+    prop.table(
+      svytable(formula_obj, design = svy_design)  # running function of interest
+      ) 
+  )
+  rm(formula_str, formula_obj,i) # removing objects created.
+}
+
 # separate procedure for income categories including NAs. 
 prop.table(svytable(~depressive+income_na,design=svy_design), margin=1) # Weighted % to be used in the table 1. 
-prop.table(svytable(~income_na,design=svy_design)) # Weighted % to be used in the table 1. 
-prop.table(svytable(~rural+op_any,design=svy_design)) # Weighted % to be used in the table 1. 
+prop.table(svytable(~rural+op_any,design=svy_design)) # Weighted % to be used in text. 
+prop.table(svytable(~depressive,design = svy_design)) # weighted % to be used in table 1
 
 rm(table_one)
+
 # 5. Data analysis: main analysis and sensitivity analyses ----
 # storing results in a object type "list"
 results<-list()
 
 # a. crude. ----
+
 # to run poisson, we must convert some variables to numeric back again: 
 results$models$poisson_crude <- svyglm(op_numeric~depressive_numeric,
                                        family=poisson, design = svy_design)
@@ -303,10 +303,9 @@ results$pr$crude<-exp(cbind(coef(results$models$poisson_crude),
 
 # b. main analysis: adjusted fully ----
 results$models$poisson_adj <- svyglm(op_numeric~depressive_numeric+factor(male)+age+
-                                       factor(stroke)+ factor(rural)+
-                                       factor(coronary_mi)+phys_health+ment_health+
-                                       factor(cancer)+factor(arthritis)+factor(ckd)+factor(diabetes)+
-                                       factor(smoking_100)+factor(drinking_any),
+                                       factor(stroke)+ factor(rural)+factor(coronary_mi)+
+                                       phys_health+factor(cancer)+factor(arthritis)+
+                                       factor(ckd)+factor(diabetes)+factor(smoking_100)+factor(drinking_any),
                                        family=poisson, design = svy_design)
 
 results$pr$poisson_adj<-exp(cbind(coef(results$models$poisson_adj), 
@@ -315,15 +314,14 @@ results$pr$poisson_adj<-exp(cbind(coef(results$models$poisson_adj),
 # c. interaction models ----
 results$models$int_rural <- svyglm(op_numeric~depressive_numeric*rural+factor(male)+age+
                                      factor(stroke)+
-                                     factor(coronary_mi)+phys_health+ment_health+
+                                     factor(coronary_mi)+phys_health+
                                      factor(cancer)+factor(arthritis)+factor(ckd)+factor(diabetes)+
                                      factor(smoking_100)+factor(drinking_any),
                                      family=poisson, design = svy_design)
 
 stratum<-data.frame(exp(svycontrast(results$models$int_rural, contrasts=c(0,1,0,0,0,
                                                                           0,0,0,0,0,
-                                                                          0,0,0,0,0,
-                                                                          1)) # rural stratum-specific PR for depressive-opioid
+                                                                          0,0,0,0,1)) # rural stratum-specific PR for depressive-opioid
 ))
 
 results$pr$int_rural_rural<-cbind(stratum[,1], 
@@ -333,8 +331,7 @@ results$pr$int_rural_rural<-cbind(stratum[,1],
 # for urban
 stratum<-data.frame(exp(svycontrast(results$models$int_rural, contrasts=c(0,1,0,0,0,
                                                                           0,0,0,0,0,
-                                                                          0,0,0,0,0,
-                                                                          0)) # urban stratum-specific PR for depressive-opioid
+                                                                          0,0,0,0,0)) # urban stratum-specific PR for depressive-opioid
 ))
 
 results$pr$int_rural_urban<-cbind(stratum[,1], 
@@ -370,25 +367,53 @@ results$pr$int_mental_14plus<-cbind(stratum[,1],
                                   stratum[,1]-1.96*stratum[,2], 
                                   stratum[,1]+1.96*stratum[,2])
 
-# d. sensitivity analyses: least and most----
-# least scenario
-results$models$poisson_least <- svyglm(op_numeric~depressive_numeric+factor(male)+age+
-                                       factor(stroke)+ factor(rural)+
-                                       factor(coronary_mi)+phys_health+ment_health+
-                                       factor(cancer)+factor(arthritis)+factor(ckd)+factor(diabetes)+
-                                       factor(smoking_100)+factor(drinking_any),
-                                       family=poisson, design = design_least)
+# d. sensitivity analyses: mice----
+# first, crude and adjusted analyses without weights
 
-results$pr$poisson_least<-exp(cbind(coef(results$models$poisson_least), 
-                                  coefci(results$models$poisson_least)))
+results$models$crude_unw <- glm(op_numeric~depressive_numeric,
+                                     family=poisson, data = mice)
 
-# most scenario
-results$models$poisson_most <- svyglm(op_numeric~depressive_numeric+factor(male)+age+
-                                         factor(stroke)+ factor(rural)+
-                                         factor(coronary_mi)+phys_health+ment_health+
-                                         factor(cancer)+factor(arthritis)+factor(ckd)+factor(diabetes)+
-                                         factor(smoking_100)+factor(drinking_any),
-                                         family=poisson, design = design_most)
+results$pr$crude_unw<-exp(cbind(coef(results$models$crude_unw), 
+                                  coefci(results$models$crude_unw)))
 
-results$pr$poisson_most<-exp(cbind(coef(results$models$poisson_most), 
-                                    coefci(results$models$poisson_most)))
+# second, adjusted without weights
+results$models$adj_unw <- glm(op_numeric~depressive_numeric+factor(male)+age+
+                                  factor(stroke)+ factor(rural)+factor(coronary_mi)+
+                                  phys_health+factor(cancer)+factor(arthritis)+
+                                  factor(ckd)+factor(diabetes)+factor(smoking_100)+factor(drinking_any),
+                                   family=poisson, data = mice)
+
+results$pr$adj_unw<-exp(cbind(coef(results$models$adj_unw), 
+                                coefci(results$models$adj_unw)))
+
+# third, using multiple imputation 
+
+mice1<-mice[,c("depressive", "male", "age", 
+                "stroke", "coronary_mi", "diabetes",
+                "cancer", "arthritis", "ckd", "smoking_100","phys_health",
+               "urban", "op_any")] # variables to be imputed
+
+# model 
+n_imputations<-20
+
+plot_missing(mice1)
+
+imp <- mice(mice1, seed = 123, m = n_imputations, method= c("","","","",
+                                                            "","","","","",
+                                                            "","","logreg","pmm"), print = FALSE)
+
+plot(imp)
+
+fit <- with(imp, glm(as.numeric(op_any)-1 ~ depressive+phys_health+factor(male)+age+
+                       factor(stroke)+ factor(coronary_mi)+
+                       factor(cancer)+factor(arthritis)+
+                       factor(ckd)+factor(diabetes)+factor(smoking_100),
+                       family=poisson))
+
+est <- pool(fit)
+summary(est)
+exp(est$pooled$estimate[2])
+exp(est$pooled$estimate[2]+1.96*0.089279593)  
+exp(est$pooled$estimate[2]-1.96*0.089279593)  
+
+# end of R script. 

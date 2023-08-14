@@ -207,14 +207,14 @@ copd$op_any <- factor(copd$op_any,
                       labels = c("No", "Yes")
                       ) 
 
-copd$urban[copd$urban==2]<-0
-copd$urban<-factor(copd$urban, 
-                   levels=0:1, 
+copd$urban[copd$urban == 2] <- 0
+copd$urban <- factor(copd$urban, 
+                   levels = 0:1, 
                    labels = c("Rural", "Urban"))
 
-copd$depressive[copd$depressive==7|copd$depressive==9]<-NA # re-coding refused or unsure as NA
-copd$depressive[copd$depressive==2]<-0 # recoding to 0/1 format
-copd$depressive<-factor(copd$depressive, 
+copd$depressive[copd$depressive == 7 | copd$depressive == 9] <- NA # re-coding refused or unsure as NA
+copd$depressive[copd$depressive == 2] <- 0 # recoding to 0/1 format
+copd$depressive <- factor(copd$depressive, 
                         levels = 0:1, 
                         labels= c("No", "Yes")) 
 
@@ -260,6 +260,15 @@ copd$depressive_numeric[copd$depressive == "Yes"] <- 1
 copd$rural[copd$urban == "Urban"] <- 0
 copd$rural[copd$urban == "Rural"] <- 1
 
+copd$age_cat[copd$age <= 39] <- 1
+copd$age_cat[copd$age >= 40 & copd$age <= 64] <- 2
+copd$age_cat[copd$age >= 65] <- 3
+
+copd$age_cat <- factor(copd$age_cat, 
+                       levels = 1:3, 
+                       labels = c("<40", "40 - 64", ">=65")
+                       )
+
 # Preparing for analysis: creating dataset for multiple imputation at the end of the procedures as sensitivity analysis. 
 
 mice <- copd
@@ -268,7 +277,7 @@ copd <- copd[!is.na(copd$depressive) == T & !is.na(copd$op_any) == T,] # keeping
 
 # 4. creating table 1
 
-table_one <- table1(~ age + race + male + income_cat + urban +
+table_one <- table1(~ age_cat + race + male + income_cat + urban +
                       coronary_mi + stroke + cancer + arthritis + diabetes +
                       ckd + smoking_100 + drinking_any + phys_14 + ment_14 +
                       any_chronic | depressive, 
@@ -291,7 +300,7 @@ svy_design <- svydesign(data = copd,
 # to obtain weighted %, we use a loop function:
 # this for loop function runs the function svytable across the columns of interest. 
 
-column_names <- c("age", "race", "male", "income_cat", "phys_14", 
+column_names <- c("age_cat", "race", "male", "income_cat", "phys_14", 
                   "ment_14", "coronary_mi", "stroke", "cancer", "arthritis", 
                   "ckd", "diabetes", "smoking_100", "drinking_any", "op_any", 
                   "urban", "any_chronic", "ment_binary", "op_numeric", "depressive_numeric", 
@@ -479,16 +488,16 @@ plot_missing(mice1) # overview of Missingness in the dataset
 
 imp <- mice(mice1, seed = 123, 
             m = n_imputations, 
-            method= c("","","","", "",
+            method = c("","","","", "",
                       "","","","","",
-                      "","logreg","pmm"), 
+                      "","logreg","logreg"), 
             print = FALSE) # the methods were selected after an iterative process
 
 plot(imp) # evaluation of MICE
 
 fit <- with(imp, glm(formula = as.numeric(op_any) - 1 ~ depressive + phys_health + factor(male) + age +
                                factor(stroke) + factor(coronary_mi) + factor(cancer) + factor(arthritis) + factor(ckd) +
-                               factor(diabetes) + factor(smoking_100),
+                               factor(diabetes) + factor(smoking_100) + factor(urban),
                      family = poisson)
             ) # fitting model to every imputed dataset
 
@@ -497,7 +506,7 @@ est <- pool(fit) # pooling the result estimates
 summary(est)
 
 exp(est$pooled$estimate[2]) # exposure of interest
-exp(est$pooled$estimate[2] + 1.96 * 0.089279593)   # 95% CI UL
-exp(est$pooled$estimate[2] - 1.96 * 0.089279593)   # 95% CI LL
+exp(est$pooled$estimate[2] + 1.96 * 0.088708739  )   # 95% CI UL
+exp(est$pooled$estimate[2] - 1.96 * 0.088708739  )   # 95% CI LL
 
 # end of R script. 

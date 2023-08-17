@@ -31,7 +31,6 @@
 # 1. Data import. libraries. Data merging ----
 
 rm(list=ls())
-setwd("C:/Users/augus/OneDrive/r_projects/EPI 514/datasets")
 
 library(haven) # importing data from SAS to R
 library(epiR) # MH analyses

@@ -30,7 +30,6 @@
 # Code starts
 # 1. Data import. libraries. Data merging ----
 
-rm(list=ls())
 
 library(haven) # importing data from SAS to R
 library(epiR) # MH analyses

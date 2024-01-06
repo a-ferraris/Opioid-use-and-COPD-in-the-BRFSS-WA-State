@@ -18,27 +18,28 @@
 # 1. Data import. libraries. Data merging
 # 2. Data cleaning, labeling, factorizing variables
 # 3. Preparing for analysis: creating data set for mice
-# 4. Data weighting: Weighting prevalence and estimating proportions 
-# 5. Data analysis: main analysis and sensitivity analyses 
+# 4. Data analysis: main analysis and sensitivity analyses 
 #    a) crude analysis, 
 #    b) adjusted main analysis, 
 #    c) interaction models, 
-# 6. Multiple Imputation using mice()
+# 5. Multiple Imputation using mice()
+# 6. DAG using dagitty
 
 ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### 
 #
 # Code starts
 # 1. Data import. libraries. Data merging ----
 
-
 library(haven) # importing data from SAS to R
-library(epiR) # MH analyses
 library(tidyverse) # subsetting filtering. 
 library(table1) # required for exporting tables in appropriate formatting 
 library(survey) # weighting proportions for table 1.
 library(lmtest) # to run poisson with weights
 library(mice) # sensitivity analysis using multiple imputation
-library(DataExplorer) # evaulation of NAs in mice
+library(dagitty) # Causal DAG
+library(mitools) # svyglm with mice
+
+results <- list()
 
 # a. loading year 2019
 # data is loaded twice to deal with the underscore that some variables present in their labels.
@@ -267,95 +268,97 @@ copd$age_cat <- factor(copd$age_cat,
                        labels = c("<40", "40 - 64", ">=65")
                        )
 
+# missing data identification 
+
+copd <- copd %>% mutate(missing = ifelse(test = is.na(diabetes) == TRUE | 
+                                         is.na(cancer) == TRUE |
+                                         is.na(arthritis) == TRUE |
+                                         is.na(depressive) == TRUE |
+                                         is.na(stroke) == TRUE |
+                                         is.na(ckd) == TRUE |
+                                         is.na(age) == TRUE |
+                                         is.na(coronary_mi) == TRUE |
+                                         is.na(phys_14) == TRUE |
+                                         is.na(smoking_100) == TRUE |
+                                         is.na(drinking_any) == TRUE |
+                                         is.na(urban) == TRUE |
+                                          is.na(op_any) == TRUE, 
+                                       yes = 1, 
+                                       no = 0
+)
+)
+
+copd$missing <- factor(copd$missing, 
+                       levels = 0 : 1, 
+                       labels = c("No", "Yes")
+                       )
+
+# missing data table ----
+
+results$table_na <- table1(~ age_cat + race + male + income_cat + urban +
+                             coronary_mi + stroke + cancer + arthritis + diabetes +
+                             ckd + smoking_100 + drinking_any + phys_14 + ment_14 +
+                             any_chronic | missing, 
+                            data = copd)
+results$table_na
+
 # Preparing for analysis: creating dataset for multiple imputation at the end of the procedures as sensitivity analysis. 
 
 mice <- copd
 
 copd <- copd[!is.na(copd$depressive) == T & !is.na(copd$op_any) == T,] # keeping observations without missing data for main exposure and outcome. 
 
-# 4. creating table 1
-
-table_one <- table1(~ age_cat + race + male + income_cat + urban +
-                      coronary_mi + stroke + cancer + arthritis + diabetes +
-                      ckd + smoking_100 + drinking_any + phys_14 + ment_14 +
-                      any_chronic | depressive, 
-                      data = copd)
-table_one
- 
- 
-# income has >5% of missing data. so we create a variable with missing as a category
-
-copd$income_na <- as.numeric(copd$income_cat) # creating new var as numeric
-copd$income_na[is.na(copd$income_na) == TRUE] <- 9 # replacing missing as 9 category to be weighted later
-
-# 4. Data weighting: Weighting prevalences and estimating proportions ----
+# 4. Data analysis: main analysis and sensitivity analyses ----
+# we store the results in a object type "list"
 
 options(survey.lonely.psu = 'adjust') # survey design features. 
+
+# flexible adjustment for age and continuous variables
+
+knots_age <- c(60, 75)
+
+for (k in 1:length(knots_age)) {
+  
+  copd[, paste("s", k, sep = "")] <- copd$age - knots_age[k]
+  copd[, paste("s", k, sep = "")][copd[, paste("s", k, sep = "")] < 0] <- 0
+  
+}
+
+knots_phys_health <- c(7, 14, 21)
+
+for (k in 1:length(knots_phys_health)) {
+  
+  copd[, paste("s_phys", k, sep = "")] <- copd$phys_health - knots_phys_health[k]
+  copd[, paste("s_phys", k, sep = "")][copd[, paste("s_phys", k, sep = "")] < 0] <- 0
+  
+}
 
 svy_design <- svydesign(data = copd, 
                         id = ~ 1, strata = ~ststr_year, weights = ~llcpwt, 
                         nest = TRUE) # setting survey design
-# to obtain weighted %, we use a loop function:
-# this for loop function runs the function svytable across the columns of interest. 
 
-column_names <- c("age_cat", "race", "male", "income_cat", "phys_14", 
-                  "ment_14", "coronary_mi", "stroke", "cancer", "arthritis", 
-                  "ckd", "diabetes", "smoking_100", "drinking_any", "op_any", 
-                  "urban", "any_chronic", "ment_binary", "op_numeric", "depressive_numeric", 
-                  "rural")
 
-for (i in column_names){ # selecting columns of interest to run the loop
-
-  print(i) # points the name of the variable that is being addressed
-  formula_str <- paste("~depressive+", i) # First, we create a string object to merge with the name of the column
-  formula_obj <- as.formula(formula_str) # to svytable() to work, we need to convert the strings in formulas/objects
-  print(
-    prop.table(
-      svytable(formula_obj, design = svy_design),  # running function of interest
-      margin = 1) 
-  )
-  rm(formula_str, formula_obj, i) # removing objects created.
-}
-
-for (i in column_names){ # selecting columns of interest to run the loop
-
-  print(i) # points the name of the variable that is being addressed
-  formula_str <- paste("~", i) # First, we create a string object to merge with the name of the column
-  formula_obj <- as.formula(formula_str) # to svytable() to work, we need to convert the strings in formulas/objects
-  print(
-    prop.table(
-      svytable(formula_obj, design = svy_design)  # running function of interest
-      ) 
-  )
-  rm(formula_str, formula_obj, i) # removing objects created.
-}
-
-# separate procedure for income categories including NAs. 
-
-prop.table(svytable( ~ depressive + income_na,design = svy_design), 
-           margin = 1) # Weighted % to be used in the table 1. 
-
-prop.table(svytable( ~ rural + op_any, 
-                     design = svy_design)
-           ) # Weighted % to be used in text. 
-
-prop.table(svytable( ~ depressive,
-                     design = svy_design)
-           ) # weighted % to be used in table 1
-
-rm(table_one)
-
-# 5. Data analysis: main analysis and sensitivity analyses ----
-# we store the results in a object type "list"
-
-results <- list()
 
 # a. crude. ----
+prop.table(
+  svytable(~op_any, design = svy_design)  # running function of interest
+) 
 
 # to run poisson, we must convert some variables to numeric back again: 
 
-results$models$poisson_crude <- svyglm(op_numeric ~ depressive_numeric,
-                                       family = poisson, design = svy_design)
+crude_analysis <- copd[copd$missing == "No", ]
+
+table(crude_analysis$depressive_numeric, crude_analysis$op_any, 
+      deparse.level = 2)
+
+svy_crude <- svydesign(data = crude_analysis, 
+                        id = ~ 1, strata = ~ststr_year, weights = ~llcpwt, 
+                        nest = TRUE) 
+
+results$models$poisson_crude <- svyglm(formula = op_numeric ~ depressive_numeric,
+                                     family = poisson, 
+                                     design = svy_crude)
+
 
 results$pr$crude <- exp(cbind (coef (results$models$poisson_crude), 
                                coefci(results$models$poisson_crude)
@@ -364,8 +367,9 @@ results$pr$crude <- exp(cbind (coef (results$models$poisson_crude),
 
 # b. main analysis: adjusted fully ----
 
-results$models$poisson_adj <- svyglm(formula = op_numeric ~ depressive_numeric + factor(male) + age +  factor(stroke) +
-                                               factor(rural) + factor(coronary_mi) + phys_health + factor(cancer) + factor(arthritis) +
+results$models$poisson_adj <- svyglm(formula = op_numeric ~ depressive_numeric + factor(male) + age + s1 + s2 + 
+                                               phys_health + s_phys1 + s_phys2 + s_phys3 + factor(stroke) + 
+                                               factor(rural) + factor(coronary_mi) + factor(cancer) + factor(arthritis) + 
                                                factor(ckd) + factor(diabetes) + factor(smoking_100) + factor(drinking_any),
                                      family = poisson, 
                                      design = svy_design)
@@ -374,20 +378,28 @@ results$pr$poisson_adj <- exp(cbind (coef(results$models$poisson_adj),
                                     coefci(results$models$poisson_adj)
                                     )
                               )
+rigr::regress("rate", formula = op_numeric ~ depressive_numeric + factor(male) + age + s1 + s2 + 
+                phys_health + s_phys1 + s_phys2 + s_phys3 + factor(stroke) + 
+                factor(rural) + factor(coronary_mi) + factor(cancer) + factor(arthritis) + 
+                factor(ckd) + factor(diabetes) + factor(smoking_100) + factor(drinking_any),
+data = copd)
+
 
 # c. interaction models ----
 
-results$models$int_rural <- svyglm(formula = op_numeric ~ depressive_numeric * rural + factor(male) + age +
-                                             factor(stroke) + factor(coronary_mi) + phys_health + factor(cancer) + factor(arthritis) +
-                                             factor(ckd) + factor(diabetes) + factor(smoking_100) + factor(drinking_any),
+results$models$int_rural <- svyglm(formula = op_numeric ~ depressive_numeric * rural + factor(male) + age + s1 + s2 + 
+                                                          phys_health + s_phys1 + s_phys2 + s_phys3 +
+                                                          factor(stroke) + factor(coronary_mi) + factor(cancer) + 
+                                                          factor(arthritis) + factor(ckd) + factor(diabetes) + factor(smoking_100) + factor(drinking_any),
                                    family = poisson, 
                                    design = svy_design)
 
-stratum<-data.frame(
-               exp(svycontrast(results$models$int_rural, 
+stratum <- data.frame(
+                      exp(svycontrast(results$models$int_rural, 
                                contrasts = c(0, 1, 0, 0, 0,
-                                           0, 0, 0, 0, 0,
-                                           0, 0, 0, 0, 1)
+                                             0, 0, 0, 0, 0,
+                                             0, 0, 0, 0, 0,
+                                             0, 0, 0, 0, 1)
                                            ) # rural stratum-specific PR for depressive~opioid
                               )
                     )
@@ -398,22 +410,24 @@ results$pr$int_rural_rural <- cbind(stratum[, 1],
 
 # for urban
 
-stratum<-data.frame(exp(svycontrast(results$models$int_rural, 
+stratum <- data.frame(exp(svycontrast(results$models$int_rural, 
                                     contrasts = c(0, 1, 0, 0, 0,
                                                   0, 0, 0, 0, 0,
-                                                  0, 0, 0, 0, 0)
-                                                  ) # urban stratum-specific PR for depressive-opioid
+                                                  0, 0, 0, 0, 0,
+                                                  0, 0, 0, 0, 0) # urban stratum-specific PR for depressive-opioid
                         )
                     )
+)
 
-results$pr$int_rural_urban<-cbind(stratum[, 1], 
-                                  stratum[, 1] - 1.96*stratum[, 2], 
-                                  stratum[, 1] + 1.96*stratum[, 2])
+results$pr$int_rural_urban <- cbind(stratum[, 1], 
+                                    stratum[, 1] - 1.96*stratum[, 2], 
+                                    stratum[, 1] + 1.96*stratum[, 2])
 
 # Interaction model with 14+ days of mental health. 
 
-results$models$int_mental <- svyglm(formula = op_numeric ~ depressive_numeric * ment_binary + factor(male) + age +
-                                              factor(stroke) + factor(rural) + factor(coronary_mi) + phys_health + factor(cancer) +
+results$models$int_mental <- svyglm(formula = op_numeric ~ depressive_numeric * ment_binary + factor(male) + age + s1 + s2 + 
+                                              factor(stroke) + factor(rural) + factor(coronary_mi) + factor(cancer) + 
+                                              phys_health + s_phys1 + s_phys2 + s_phys3 +
                                               factor(arthritis) + factor(ckd) + factor(diabetes) + factor(smoking_100) + factor(drinking_any),
                                      family = poisson, 
                                      design = svy_design)
@@ -423,7 +437,8 @@ stratum <- data.frame(
                                  contrasts = c(0, 1, 0, 0, 0,
                                                0, 0, 0, 0, 0,
                                                0, 0, 0, 0, 0,
-                                               0)
+                                               0, 0, 0, 0, 0, 
+                                               1)
                                    ) # individuals with zero to 13 days of poor ment health
                        )
                       )
@@ -437,7 +452,8 @@ stratum <- data.frame(
                                     contrasts = c(0, 1, 0, 0, 0,
                                                   0, 0, 0, 0, 0,
                                                   0, 0, 0, 0, 0,
-                                                  1)
+                                                  0, 0, 0, 0, 0, 
+                                                  0)
                                   ) # individuals with 14+ days of poor ment health
                        )
                      )
@@ -446,65 +462,171 @@ results$pr$int_mental_14plus <- cbind(stratum[, 1],
                                       stratum[, 1] - 1.96 * stratum[, 2], 
                                       stratum[, 1] + 1.96 * stratum[, 2])
 
-# d. sensitivity analyses: mice----
-# first, crude and adjusted analyses without weights
-
-results$models$crude_unw <- glm(formula = op_numeric ~ depressive_numeric,
-                                family = poisson, 
-                                data = mice)
-
-results$pr$crude_unw <- exp(cbind(coef(results$models$crude_unw), 
-                                  coefci(results$models$crude_unw)
-                                  )
-                            )
-
-# second, adjusted without weights
-
-results$models$adj_unw <- glm(formula = op_numeric ~ depressive_numeric + factor(male) + age + factor(stroke) +
-                                        factor(rural) + factor(coronary_mi) + phys_health + factor(cancer) + factor(arthritis) +
-                                        factor(ckd) + factor(diabetes) + factor(smoking_100) + factor(drinking_any),
-                              family = poisson, 
-                              data = mice)
-
-results$pr$adj_unw <- exp(cbind(coef(results$models$adj_unw), 
-                                coefci(results$models$adj_unw)
-                                )
-                          )
-
-# third, using multiple imputation by chained equations
+# 5. sensitivity analyses: mice----
+# using multiple imputation by chained equations
 
 mice1 <- mice[, c("depressive", "male", "age", "stroke", "coronary_mi",
                    "diabetes", "cancer", "arthritis", "ckd", "smoking_100",
-                 "phys_health", "urban", "op_any")
+                   "phys_health", "urban", "op_any", "drinking_any", "ststr_year", "llcpwt")
               ] # variables to be used to impute op_any and urban. ORDER may change the results
 
-# model 
+# imputation model 
 
 n_imputations <- 20 #  number of iterations. 
 
-plot_missing(mice1) # overview of Missingness in the dataset
+# imputation matrix
 
-imp <- mice(mice1, seed = 123, 
-            m = n_imputations, 
-            method = c("","","","", "",
-                      "","","","","",
-                      "","logreg","logreg"), 
-            print = FALSE) # the methods were selected after an iterative process
+pred <- make.predictorMatrix(mice1)
 
-plot(imp) # evaluation of MICE
+pred[c("depressive", "ststr_year"), c("depressive", "ststr_year")] <- 0
+pred[c("age", "ststr_year"), c("age", "ststr_year")] <- 0
+pred[c("male", "ststr_year"), c("male", "ststr_year")] <- 0
+pred[c("stroke", "ststr_year"), c("stroke", "ststr_year")] <- 0
+pred[c("coronary_mi", "ststr_year"), c("coronary_mi", "ststr_year")] <- 0
+pred[c("diabetes", "ststr_year"), c("diabetes", "ststr_year")] <- 0
+pred[c("cancer", "ststr_year"), c("cancer", "ststr_year")] <- 0
+pred[c("arthritis", "ststr_year"), c("arthritis", "ststr_year")] <- 0
+pred[c("ckd", "ststr_year"), c("ckd", "ststr_year")] <- 0
+pred[c("smoking_100", "ststr_year"), c("smoking_100", "ststr_year")] <- 0
+pred[c("phys_health", "ststr_year"), c("phys_health", "ststr_year")] <- 0
+pred[c("urban", "ststr_year"), c("urban", "ststr_year")] <- 0
+pred[c("op_any", "ststr_year"), c("op_any", "ststr_year")] <- 0
+pred[c("drinking_any", "ststr_year"), c("drinking_any", "ststr_year")] <- 0
 
-fit <- with(imp, glm(formula = as.numeric(op_any) - 1 ~ depressive + phys_health + factor(male) + age +
-                               factor(stroke) + factor(coronary_mi) + factor(cancer) + factor(arthritis) + factor(ckd) +
-                               factor(diabetes) + factor(smoking_100) + factor(urban),
-                     family = poisson)
-            ) # fitting model to every imputed dataset
+pred[c("depressive", "llcpwt"), c("depressive", "llcpwt")] <- 0
+pred[c("age", "llcpwt"), c("age", "llcpwt")] <- 0
+pred[c("male", "llcpwt"), c("male", "llcpwt")] <- 0
+pred[c("stroke", "llcpwt"), c("stroke", "llcpwt")] <- 0
+pred[c("coronary_mi", "llcpwt"), c("coronary_mi", "llcpwt")] <- 0
+pred[c("diabetes", "llcpwt"), c("diabetes", "llcpwt")] <- 0
+pred[c("cancer", "llcpwt"), c("cancer", "llcpwt")] <- 0
+pred[c("arthritis", "llcpwt"), c("arthritis", "llcpwt")] <- 0
+pred[c("ckd", "llcpwt"), c("ckd", "llcpwt")] <- 0
+pred[c("smoking_100", "llcpwt"), c("smoking_100", "llcpwt")] <- 0
+pred[c("phys_health", "llcpwt"), c("phys_health", "llcpwt")] <- 0
+pred[c("urban", "llcpwt"), c("urban", "llcpwt")] <- 0
+pred[c("op_any", "llcpwt"), c("op_any", "llcpwt")] <- 0
+pred[c("drinking_any", "llcpwt"), c("drinking_any", "llcpwt")] <- 0
 
-est <- pool(fit) # pooling the result estimates
+pred # checking imputation matrix 
+
+imputed_dataset <- mice(mice1, seed = 123, 
+                        m = n_imputations, 
+                        maxit = 50, 
+                        method = c("logreg","logreg","pmm","logreg", "logreg",
+                                   "logreg","logreg","logreg","logreg","logreg",
+                                    "pmm","logreg","logreg", "logreg", "", ""), 
+                        pred,
+                        print = FALSE) # the methods were selected after an iterative process
+
+plot(imputed_dataset) # evaluation of MICE
+
+
+imp_list <- lapply(1:20, function( n ) complete(imputed_dataset , action = n ) )
+
+for (i in 1:20){
+
+imp_list[[i]]$s1 <- ifelse(test = imp_list[[i]]$age > 55, 
+                           yes = imp_list[[i]]$age - 60, 
+                           no = 0)
+
+imp_list[[i]]$s2 <- ifelse(test = imp_list[[i]]$age > 75, 
+                           yes = imp_list[[i]]$age - 75, 
+                           no = 0)
+
+imp_list[[i]]$s_phys1 <- ifelse(test = imp_list[[i]]$phys_health > 7,
+                                yes = imp_list[[i]]$phys_health - 7, 
+                                no = 0)
+
+imp_list[[i]]$s_phys2 <- ifelse(test = imp_list[[i]]$phys_health > 14,
+                                yes = imp_list[[i]]$phys_health - 14, 
+                                no = 0)
+
+imp_list[[i]]$s_phys3 <- ifelse(test = imp_list[[i]]$phys_health > 21,
+                                yes = imp_list[[i]]$phys_health - 21, 
+                                no = 0)
+}
+
+imputed_data <- svydesign(data = imputationList(imp_list), 
+                          id = ~ 1, strata = ~ststr_year, weights = ~llcpwt, 
+                          nest = TRUE) # setting survey design
+
+imputed_models <- with(imputed_data, 
+                       svyglm(formula = as.numeric(op_any) - 1 ~ depressive + factor(male) + age + s1 + s2 +
+                                        factor(stroke) + factor(urban) + factor(coronary_mi) + phys_health + s_phys1 + s_phys2 + s_phys3 + 
+                                        factor(cancer) + factor(arthritis) + factor(ckd) + factor(diabetes) + factor(smoking_100) + factor(drinking_any),
+                                            family = poisson, 
+                                            design = imputed_data)
+)
+
+est <- pool(imputed_models) # pooling the result estimates
 
 summary(est)
 
 exp(est$pooled$estimate[2]) # exposure of interest
-exp(est$pooled$estimate[2] + 1.96 * 0.088708739  )   # 95% CI UL
-exp(est$pooled$estimate[2] - 1.96 * 0.088708739  )   # 95% CI LL
+exp(est$pooled$estimate[2] + 1.96 * 0.09685749  )   # 95% CI UL
+exp(est$pooled$estimate[2] - 1.96 * 0.09685749  )   # 95% CI LL
 
+# DAG. using daggity. 
+
+dag <- dagitty('dag {
+"Anxiety disorders" [latent,pos="-1.033,0.570"]
+"Chronic kidney disease" [adjusted,pos="-1.423,0.426"]
+"Chronic pain" [latent,pos="-1.135,0.295"]
+"Coronary disease, Stroke, and Peripheral vascular disease" [adjusted,pos="-1.192,0.505"]
+"Depressive Disorders" [exposure,pos="-1.524,-0.009"]
+"Non-skin cancer" [adjusted,pos="-1.648,0.158"]
+"Physical Health" [adjusted,pos="-1.699,0.093"]
+"Prescription opioid use" [outcome,pos="-0.883,0.004"]
+"Rural residency" [adjusted,pos="-1.649,-0.310"]
+"Tobacco and alcohol use" [adjusted,pos="-1.555,0.573"]
+Age [adjusted,pos="-1.701,-0.164"]
+Arthritis [adjusted,pos="-1.713,0.443"]
+Diabetes [adjusted,pos="-1.589,0.282"]
+Income [adjusted,pos="-1.334,-0.303"]
+Sex [adjusted,pos="-1.480,-0.311"]
+"Anxiety disorders" -> "Prescription opioid use"
+"Anxiety disorders" <-> "Chronic pain"
+"Chronic kidney disease" -> "Depressive Disorders"
+"Chronic kidney disease" -> "Prescription opioid use"
+"Chronic pain" -> "Prescription opioid use"
+"Coronary disease, Stroke, and Peripheral vascular disease" -> "Anxiety disorders"
+"Coronary disease, Stroke, and Peripheral vascular disease" -> "Chronic pain"
+"Coronary disease, Stroke, and Peripheral vascular disease" -> "Depressive Disorders"
+"Coronary disease, Stroke, and Peripheral vascular disease" -> "Prescription opioid use"
+"Depressive Disorders" -> "Prescription opioid use"
+"Non-skin cancer" -> "Chronic pain"
+"Non-skin cancer" -> "Depressive Disorders"
+"Non-skin cancer" -> "Prescription opioid use"
+"Physical Health" -> "Depressive Disorders"
+"Physical Health" -> "Prescription opioid use"
+"Rural residency" -> "Depressive Disorders"
+"Rural residency" -> "Prescription opioid use"
+"Tobacco and alcohol use" -> "Anxiety disorders"
+"Tobacco and alcohol use" -> "Chronic kidney disease"
+"Tobacco and alcohol use" -> "Coronary disease, Stroke, and Peripheral vascular disease"
+"Tobacco and alcohol use" -> "Depressive Disorders"
+"Tobacco and alcohol use" -> "Non-skin cancer"
+"Tobacco and alcohol use" -> Arthritis
+"Tobacco and alcohol use" -> Diabetes
+Age -> "Depressive Disorders"
+Age -> "Physical Health"
+Age -> "Prescription opioid use"
+Arthritis -> "Chronic pain"
+Arthritis -> "Depressive Disorders"
+Arthritis -> "Physical Health"
+Arthritis -> "Prescription opioid use"
+Diabetes -> "Chronic kidney disease"
+Diabetes -> "Chronic pain"
+Diabetes -> "Coronary disease, Stroke, and Peripheral vascular disease"
+Income -> "Depressive Disorders"
+Income -> "Prescription opioid use"
+Sex -> "Depressive Disorders"
+Sex -> "Prescription opioid use"
+}'
+)
+
+plot(dag)
+                   
 # end of R script. 
+
